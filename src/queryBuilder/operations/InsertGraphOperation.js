@@ -2,6 +2,7 @@ import _ from 'lodash';
 import Promise from 'bluebird';
 import DelegateOperation from './DelegateOperation';
 import GraphInserter from '../graphInserter/GraphInserter';
+import ManyToManyRelation from '../../relations/manyToMany/ManyToManyRelation';
 import {isPostgres} from '../../utils/dbUtils';
 
 export default class InsertGraphOperation extends DelegateOperation {
@@ -49,6 +50,19 @@ export default class InsertGraphOperation extends DelegateOperation {
     // Do nothing.
   }
 
+  isRelationManyToManyAndWillIgnoreInsertion(modelClassRelations, modelClassInsertion) {
+      let result = false;
+
+      _.each(modelClassRelations, (relation, key) => {
+        let isSameModel = (relation.relatedModelClass === modelClassInsertion);
+        if (relation instanceof ManyToManyRelation && isSameModel) {
+            result = true;
+        }
+      });
+
+      return result;
+  }
+
   // We overrode all other hooks but this one and do all the work in here.
   // This is a bit hacky.
   onAfterQuery(builder) {
@@ -67,26 +81,29 @@ export default class InsertGraphOperation extends DelegateOperation {
       const others = [];
       const queries = [];
 
-      let insertQuery = tableInsertion.modelClass
-        .query()
-        .childQueryOf(builder);
+      let ingnoreInsertion = self.isRelationManyToManyAndWillIgnoreInsertion(modelClassRelations, tableInsertion.modelClass);
+      if (!ingnoreInsertion) {
+          let insertQuery = tableInsertion.modelClass
+            .query()
+            .childQueryOf(builder);
 
-      for (let i = 0, l = tableInsertion.models.length; i < l; ++i) {
-        const model = tableInsertion.models[i];
+          for (let i = 0, l = tableInsertion.models.length; i < l; ++i) {
+            const model = tableInsertion.models[i];
 
-        // We skipped the validation above. We need to validate here since at this point
-        // the models should no longer contain any special properties.
-        model.$validate();
+            // We skipped the validation above. We need to validate here since at this point
+            // the models should no longer contain any special properties.
+            model.$validate();
 
-        if (tableInsertion.isInputModel[i]) {
-          inputs.push(model);
-        } else {
-          others.push(model);
-        }
+            if (tableInsertion.isInputModel[i]) {
+              inputs.push(model);
+            } else {
+              others.push(model);
+            }
+          }
+
+          batchInsert(inputs, insertQuery.clone().copyFrom(builder, /returning/), batchSize, queries);
+          batchInsert(others, insertQuery.clone(), batchSize, queries);
       }
-
-      batchInsert(inputs, insertQuery.clone().copyFrom(builder, /returning/), batchSize, queries);
-      batchInsert(others, insertQuery.clone(), batchSize, queries);
 
       return Promise.all(queries);
     }).then(() => {
@@ -108,4 +125,3 @@ function batchInsert(models, queryBuilder, batchSize, queries) {
     queries.push(queryBuilder.clone().insert(batches[i]));
   }
 }
-
