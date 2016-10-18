@@ -78,7 +78,7 @@ export default class UpdateGraphOperation extends DelegateOperation {
 
           Promise.all(queries);
       }).catch(function(err) {
-          console.log('UpdateGraphOperation ' + err);
+          throw new Error('UpdateGraphOperation ' + err);
       });
   }
 

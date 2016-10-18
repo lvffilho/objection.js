@@ -41,6 +41,21 @@ export default class GraphUpdater {
       let relationModelClass = relation.modelClass;
       let modelToPersist = relationModelClass.ensureModel(json);
 
+      // Add FK property in JSON
+      if (!relation.relationField) {
+          throw new Error('Relation Field is required for update cascade.');
+      }
+
+      let fk = relation.relationField;
+      let fk_id = this.model.id;
+
+      Object.defineProperty(modelToPersist, fk, {
+          value: fk_id,
+          writable: true,
+          enumerable: true,
+          configurable: true
+      });
+
       let insert = relationModelClass.query().insert(modelToPersist);
 
       this.inserts.push(insert);
