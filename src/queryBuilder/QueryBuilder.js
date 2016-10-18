@@ -22,6 +22,7 @@ import RunAfterOperation from './operations/RunAfterOperation';
 import OnBuildOperation from './operations/OnBuildOperation';
 import SelectOperation from './operations/SelectOperation';
 import EagerOperation from './operations/EagerOperation';
+import UpdateGraphOperation from './operations/UpdateGraphOperation';
 
 export default class QueryBuilder extends QueryBuilderBase {
 
@@ -921,6 +922,26 @@ export default class QueryBuilder extends QueryBuilderBase {
   update(modelOrObject) {
     const updateOperation = this._updateOperationFactory(this);
     return this.callQueryBuilderOperation(updateOperation, [modelOrObject]);
+  }
+
+  /**
+   * @param {Object|Model|Array.<Object>|Array.<Model>} modelsOrObjects
+   * @returns {QueryBuilder}
+   */
+  @writeQueryOperation
+  updateGraph(modelsOrObjects) {
+    const updateGraphOperation = new UpdateGraphOperation('updateGraph', {
+      delegate: this._updateOperationFactory(this)
+    });
+
+    return this.callQueryBuilderOperation(updateGraphOperation, [modelsOrObjects]);
+  }
+
+  /**
+   * @returns {QueryBuilder}
+   */
+  updateWithRelated(...args) {
+    return this.updateGraph(...args);
   }
 
   /**

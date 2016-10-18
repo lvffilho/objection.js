@@ -69,6 +69,9 @@ export default class InsertGraphOperation extends DelegateOperation {
     const ModelClass = builder.modelClass();
     const batchSize = isPostgres(builder.knex()) ? 100 : 1;
 
+    let self = this;
+    let modelClassRelations = ModelClass.relationMappings;
+
     let inserter = new GraphInserter({
       modelClass: ModelClass,
       models: this.models,
