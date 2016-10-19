@@ -51,11 +51,13 @@ export default class InsertGraphOperation extends DelegateOperation {
   }
 
   isRelationManyToManyAndWillIgnoreInsertion(modelClassRelations, modelClassInsertion) {
-      let result = false;
+    let result = false;
 
-      _.each(modelClassRelations, (relation, key) => {
-        let isSameModel = (relation.relatedModelClass === modelClassInsertion);
-        if (relation instanceof ManyToManyRelation && isSameModel) {
+      _.each(modelClassRelations, (relationMapping, key) => {
+        let isSameModel = (relationMapping.modelClass === modelClassInsertion);
+        let isManyToManyRelation = (relationMapping.relation === ManyToManyRelation);
+
+        if (isSameModel && isManyToManyRelation) {
             result = true;
         }
       });
