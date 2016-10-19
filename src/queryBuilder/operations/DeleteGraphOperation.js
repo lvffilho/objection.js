@@ -4,21 +4,16 @@ import clone from 'lodash/clone';
 import omit from 'lodash/omit';
 import DelegateOperation from './DelegateOperation';
 import {isPostgres} from '../../utils/dbUtils';
-import GraphUpdater from '../graphUpdater/GraphUpdater'
+import GraphDeleter from '../graphDeleter/GraphDeleter'
 
-export default class UpdateGraphOperation extends DelegateOperation {
+export default class DeleteGraphOperation extends DelegateOperation {
 
   constructor(name, opt) {
     super(name, opt);
 
-    // Our delegate method inherits from `UpdateRelation`. Disable the call-time
-    // validation. We do the validation in onAfterQuery instead.
-    this.model = null;
-    this.databaseModel = null;
-    this.modelOptions = clone(this.opt.modelOptions) || {};
-    this.isWriteOperation = true;
+    this.modelID = null;
 
-    this.delegate.modelOptions.skipValidation = true;
+    this.isWriteOperation = true;
   }
 
   call(builder, args) {
@@ -28,7 +23,7 @@ export default class UpdateGraphOperation extends DelegateOperation {
     // value may depend on other models in the graph and cannot be inserted first.
     builder.resolve([]);
 
-    this.model = builder.modelClass().ensureModel(args[0], this.modelOptions);
+    this.modelID = args[0];
 
     return retVal;
   }
@@ -62,24 +57,11 @@ export default class UpdateGraphOperation extends DelegateOperation {
   // This is a bit hacky.
   onAfterQuery(builder) {
       const ModelClass = builder.modelClass();
-      const object = this.model;
-      const currentID = object.id;
 
-      let query = ModelClass.query();
-      let eagers = ModelClass.eagers;
+      let deleter = new GraphDeleter(ModelClass, this.modelID);
+      let queries = deleter.generateQueries();
 
-      if (typeof(eagers) !== 'undefined' && eagers !== null) {
-          query.eager(eagers);
-      }
-
-      query.findById(currentID).then(function(dbObject) {
-          let updater = new GraphUpdater(ModelClass, dbObject, object);
-          let queries = updater.generateQueries();
-
-          Promise.all(queries);
-      }).catch(function(err) {
-          throw new Error('UpdateGraphOperation ' + err);
-      });
+      Promise.all(queries);
   }
 
   onAfterInternal() {

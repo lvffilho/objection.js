@@ -1,6 +1,8 @@
 import _ from 'lodash';
 import Promise from 'bluebird';
 import deepdiff from 'deep-diff';
+import uuid from 'node-uuid';
+import Model from '../../model/Model'
 
 export default class GraphUpdater {
 
@@ -37,16 +39,16 @@ export default class GraphUpdater {
       let json = currentDiff.item.rhs;
       let path = currentDiff.path[0];
 
-      let relation = this.modelClass.relationMappings[path];
-      let relationModelClass = relation.modelClass;
+      let relationMapping = this.modelClass.relationMappings[path];
+      let relationModelClass = relationMapping.modelClass;
       let modelToPersist = relationModelClass.ensureModel(json);
 
       // Add FK property in JSON
-      if (!relation.relationField) {
+      if (!relationMapping.relationField) {
           throw new Error('Relation Field is required for update cascade.');
       }
 
-      let fk = relation.relationField;
+      let fk = relationMapping.relationField;
       let fk_id = this.model.id;
 
       Object.defineProperty(modelToPersist, fk, {
@@ -56,17 +58,54 @@ export default class GraphUpdater {
           configurable: true
       });
 
-      let insert = relationModelClass.query().insert(modelToPersist);
+      // Gerantee ID
+      if (!modelToPersist.id) {
+          modelToPersist.id = uuid.v4();
+      }
 
+      let insert = relationModelClass.query().insert(modelToPersist);
       this.inserts.push(insert);
+
+      let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
+      if (isManyToMany){
+          if (!relationMapping.join.through.modelClass) {
+              throw new Error('modelClass from ManyToManyRelation is required.');
+          }
+
+          let manyToManyModel = relationMapping.join.through.modelClass;
+          let fromField = relationMapping.join.through.from.split('.')[1];
+          let toField = relationMapping.join.through.to.split('.')[1];
+
+          let jsonManyToMany = {};
+          jsonManyToMany[fromField] = this.model.id;
+          jsonManyToMany[toField] = modelToPersist.id;
+
+          let manyToManyToInsert = manyToManyModel.ensureModel(jsonManyToMany);
+
+          let insertMany = manyToManyModel.query().insert(manyToManyToInsert);
+          this.inserts.push(insertMany);
+      }
   }
 
   generateFromDelete(currentDiff) {
       let deletedID = currentDiff.lhs.id;
       let path = currentDiff.path[0];
 
-      let relation = this.modelClass.relationMappings[path];
-      let relationModelClass = relation.modelClass;
+      let relationMapping = this.modelClass.relationMappings[path];
+      let relationModelClass = relationMapping.modelClass;
+
+      let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
+      if (isManyToMany){
+          if (!relationMapping.join.through.modelClass) {
+              throw new Error('modelClass from ManyToManyRelation is required.');
+          }
+
+          let manyToManyModel = relationMapping.join.through.modelClass;
+          let toField = relationMapping.join.through.to.split('.')[1];
+
+          let deleteManyToManyQuery = manyToManyModel.query().delete().where(toField, '=', deletedID);
+          this.deletes.push(deleteManyToManyQuery);
+      }
 
       let deleteQuery = relationModelClass.query().deleteById(deletedID);
 
@@ -102,7 +141,6 @@ export default class GraphUpdater {
       let oldObject = JSON.parse(JSON.stringify(this.dbModel));
 
       let diff = deepdiff.diff(oldObject, newObject);
-
       for (let key in diff) {
           let currentDiff = diff[key];
           let kind = currentDiff.kind;

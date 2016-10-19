@@ -23,6 +23,7 @@ import OnBuildOperation from './operations/OnBuildOperation';
 import SelectOperation from './operations/SelectOperation';
 import EagerOperation from './operations/EagerOperation';
 import UpdateGraphOperation from './operations/UpdateGraphOperation';
+import DeleteGraphOperation from './operations/DeleteGraphOperation';
 
 export default class QueryBuilder extends QueryBuilderBase {
 
@@ -1042,6 +1043,25 @@ export default class QueryBuilder extends QueryBuilderBase {
    */
   deleteById(id) {
     return this.delete().whereComposite(this._modelClass.getFullIdColumn(), id);
+  }
+
+  /**
+   * @returns {QueryBuilder}
+   */
+  deleteByIdWithRelated(...args) {
+    return this.deleteGraphById(...args);
+  }
+
+  /**
+   * @param {number|string|Array.<number|string>} id
+   * @returns {QueryBuilder}
+   */
+  deleteGraphById(id) {
+    const deleteGraphOperation = new DeleteGraphOperation('deleteGraphById', {
+      delegate: this._deleteOperationFactory(this)
+    });
+
+    return this.callQueryBuilderOperation(deleteGraphOperation, [id]);
   }
 
   /**
