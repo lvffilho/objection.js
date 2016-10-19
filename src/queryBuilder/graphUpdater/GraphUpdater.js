@@ -120,19 +120,46 @@ export default class GraphUpdater {
           let relation = path[0];
           let index = path[1];
           let property = path[2];
+          let oldValue = currentDiff.lhs;
           let value = currentDiff.rhs;
 
           let relationMapping = this.modelClass.relationMappings[relation];
           let relationModelClass = relationMapping.modelClass;
 
-          let json = this.model[relation][index];
-          let currentID = json.id;
+          let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
+          if (isManyToMany) {
 
-          let modelToPersist = relationModelClass.ensureModel(json);
+              let manyToManyModel = relationMapping.join.through.modelClass;
+              if (!manyToManyModel) {
+                  throw new Error('ModelClass from ManyToManyRelation is required.');
+              }
 
-          let updateQuery = relationModelClass.query().update(modelToPersist).where('id', '=', modelToPersist.id);
+              if (property === 'id') {
+                  let fromField = relationMapping.join.through.from.split('.')[1];
+                  let toField = relationMapping.join.through.to.split('.')[1];
 
-          this.updates.push(updateQuery);
+                  let json = {};
+                  json[toField] = value;
+                  json[fromField] = this.model.id;
+
+                  let modelToPersist = manyToManyModel.ensureModel(json);
+
+                  let updateQuery = manyToManyModel.query().update(modelToPersist)
+                      .where(toField, '=', oldValue)
+                      .where(fromField, '=', this.model.id);
+
+                  this.updates.push(updateQuery);
+              }
+          } else {
+              let json = this.model[relation][index];
+              let currentID = json.id;
+
+              let modelToPersist = relationModelClass.ensureModel(json);
+
+              let updateQuery = relationModelClass.query().update(modelToPersist).where('id', '=', modelToPersist.id);
+
+              this.updates.push(updateQuery);
+          }
       }
   }
 
@@ -141,6 +168,11 @@ export default class GraphUpdater {
       let oldObject = JSON.parse(JSON.stringify(this.dbModel));
 
       let diff = deepdiff.diff(oldObject, newObject);
+
+      console.log('----diff----');
+      console.log(diff);
+      console.log('---fimdif---');
+
       for (let key in diff) {
           let currentDiff = diff[key];
           let kind = currentDiff.kind;
