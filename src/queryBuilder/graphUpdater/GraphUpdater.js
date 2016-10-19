@@ -169,10 +169,6 @@ export default class GraphUpdater {
 
       let diff = deepdiff.diff(oldObject, newObject);
 
-      console.log('----diff----');
-      console.log(diff);
-      console.log('---fimdif---');
-
       for (let key in diff) {
           let currentDiff = diff[key];
           let kind = currentDiff.kind;
