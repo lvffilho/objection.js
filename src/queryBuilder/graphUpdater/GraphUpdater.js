@@ -95,21 +95,27 @@ export default class GraphUpdater {
       let relationModelClass = relationMapping.modelClass;
 
       let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
+      // ManyToMany Delete
       if (isManyToMany){
-          if (!relationMapping.join.through.modelClass) {
+          let manyToManyModel = relationMapping.join.through.modelClass;
+          if (!manyToManyModel) {
               throw new Error('modelClass from ManyToManyRelation is required.');
           }
 
-          let manyToManyModel = relationMapping.join.through.modelClass;
+          let fromField = relationMapping.join.through.from.split('.')[1];
           let toField = relationMapping.join.through.to.split('.')[1];
 
-          let deleteManyToManyQuery = manyToManyModel.query().delete().where(toField, '=', deletedID);
-          this.deletes.push(deleteManyToManyQuery);
+          let deleteQuery = manyToManyModel.query().delete()
+              .where(toField, '=', deletedID)
+              .where(fromField, '=', this.model.id);
+
+          this.deletes.push(deleteQuery);
+      // Normal Delete
+      } else {
+        let deleteQuery = relationModelClass.query().deleteById(deletedID);
+
+        this.deletes.push(deleteQuery);
       }
-
-      let deleteQuery = relationModelClass.query().deleteById(deletedID);
-
-      this.deletes.push(deleteQuery);
   }
 
   generateFromUpdate(currentDiff) {
@@ -128,12 +134,12 @@ export default class GraphUpdater {
 
           let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
           if (isManyToMany) {
-
               let manyToManyModel = relationMapping.join.through.modelClass;
               if (!manyToManyModel) {
                   throw new Error('ModelClass from ManyToManyRelation is required.');
               }
 
+              // Changing relation ManyToMany
               if (property === 'id') {
                   let fromField = relationMapping.join.through.from.split('.')[1];
                   let toField = relationMapping.join.through.to.split('.')[1];
@@ -150,6 +156,7 @@ export default class GraphUpdater {
 
                   this.updates.push(updateQuery);
               }
+          // Update Normal Field
           } else {
               let json = this.model[relation][index];
               let currentID = json.id;
