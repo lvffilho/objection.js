@@ -41,7 +41,6 @@ export default class GraphUpdater {
 
       let relationMapping = this.modelClass.relationMappings[path];
       let relationModelClass = relationMapping.modelClass;
-      let modelToPersist = relationModelClass.ensureModel(json);
 
       // Add FK property in JSON
       if (!relationMapping.relationField) {
@@ -51,7 +50,7 @@ export default class GraphUpdater {
       let fk = relationMapping.relationField;
       let fk_id = this.model.id;
 
-      Object.defineProperty(modelToPersist, fk, {
+      Object.defineProperty(json, fk, {
           value: fk_id,
           writable: true,
           enumerable: true,
@@ -59,9 +58,11 @@ export default class GraphUpdater {
       });
 
       // Gerantee ID
-      if (!modelToPersist.id) {
-          modelToPersist.id = uuid.v4();
+      if (!json.id) {
+          json.id = uuid.v4();
       }
+
+      let modelToPersist = relationModelClass.ensureModel(json);
 
       let insert = relationModelClass.query().insert(modelToPersist);
       this.inserts.push(insert);
