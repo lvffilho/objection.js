@@ -212,10 +212,6 @@ export default class GraphUpdater {
           let currentDiff = diff[key];
           let kind = currentDiff.kind;
 
-          console.log('currentDiff');
-          console.log(currentDiff);
-          console.log('------------------------');
-
           if (kind === 'A') {
               if (currentDiff.item.kind === 'N') {
                   // Insert
