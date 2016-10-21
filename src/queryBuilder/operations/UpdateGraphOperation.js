@@ -16,9 +16,11 @@ export default class UpdateGraphOperation extends DelegateOperation {
     this.model = null;
     this.databaseModel = null;
     this.modelOptions = clone(this.opt.modelOptions) || {};
+
     this.isWriteOperation = true;
 
     this.delegate.modelOptions.skipValidation = true;
+    this.modelOptions.skipValidationForRelations = true;
   }
 
   call(builder, args) {

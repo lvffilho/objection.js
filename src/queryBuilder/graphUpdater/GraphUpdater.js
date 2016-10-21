@@ -30,7 +30,7 @@ export default class GraphUpdater {
 
   generateBaseQuery() {
       let modelToUpdate = this.modelClass.ensureModel(this.model);
-      let baseUpdate = this.modelClass.query().update(modelToUpdate).where('id', '=', this.model.id);
+      let baseUpdate = this.modelClass.query().update(this.model).where('id', '=', this.model.id);
 
       this.queries.push(baseUpdate);
   }
@@ -88,7 +88,38 @@ export default class GraphUpdater {
       }
   }
 
-  generateFromDelete(currentDiff) {
+  generateFromDeleteFromArray(currentDiff) {
+      let deletedID = currentDiff.item.lhs.id;
+      let path = currentDiff.path[0];
+
+      let relationMapping = this.modelClass.relationMappings[path];
+      let relationModelClass = relationMapping.modelClass;
+
+      let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
+      // ManyToMany Delete
+      if (isManyToMany){
+          let manyToManyModel = relationMapping.join.through.modelClass;
+          if (!manyToManyModel) {
+              throw new Error('modelClass from ManyToManyRelation is required.');
+          }
+
+          let fromField = relationMapping.join.through.from.split('.')[1];
+          let toField = relationMapping.join.through.to.split('.')[1];
+
+          let deleteQuery = manyToManyModel.query().delete()
+              .where(toField, '=', deletedID)
+              .where(fromField, '=', this.model.id);
+
+          this.deletes.push(deleteQuery);
+      // Normal Delete
+      } else {
+        let deleteQuery = relationModelClass.query().deleteById(deletedID);
+
+        this.deletes.push(deleteQuery);
+      }
+  }
+
+  generateFromDeletePosition(currentDiff) {
       let deletedID = currentDiff.lhs.id;
       let path = currentDiff.path[0];
 
@@ -181,12 +212,22 @@ export default class GraphUpdater {
           let currentDiff = diff[key];
           let kind = currentDiff.kind;
 
+          console.log('currentDiff');
+          console.log(currentDiff);
+          console.log('------------------------');
+
           if (kind === 'A') {
-              this.generateFromInsert(currentDiff);
+              if (currentDiff.item.kind === 'N') {
+                  // Insert
+                  this.generateFromInsert(currentDiff);
+              } else if (currentDiff.item.kind === 'D') {
+                  // Delete
+                  this.generateFromDeleteFromArray(currentDiff);
+              }
           } else if (kind === 'E') {
               // Delete
               if (currentDiff.rhs === null) {
-                  this.generateFromDelete(currentDiff);
+                  this.generateFromDeletePosition(currentDiff);
               // Update
               } else {
                   this.generateFromUpdate(currentDiff)

@@ -289,7 +289,9 @@ export default class Model extends ModelBase {
         const relation = relations[relationName];
 
         if (Array.isArray(relationJson)) {
-          this[relationName] = relation.relatedModelClass.ensureModelArray(relationJson, options);
+          if (!options.skipValidationForRelations || options.skipValidationForRelations === false) {
+            this[relationName] = relation.relatedModelClass.ensureModelArray(relationJson, options);
+          }
         } else if (relationJson) {
           this[relationName] = relation.relatedModelClass.ensureModel(relationJson, options);
         } else {
