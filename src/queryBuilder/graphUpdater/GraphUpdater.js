@@ -1,258 +1,291 @@
 import _ from 'lodash';
 import Promise from 'bluebird';
-import deepdiff from 'deep-diff';
 import uuid from 'node-uuid';
 import Model from '../../model/Model'
+import SortedMap from "collections/sorted-map";
 
 export default class GraphUpdater {
 
-  constructor(modelClass, dbJson, updateJson) {
-      this.modelClass = modelClass;
-      this.model = updateJson;
-      this.dbModel = dbJson;
+    constructor(modelClass, dbJson, updateJson) {
+        this.modelClass = modelClass;
+        this.relationMappings = this.modelClass.relationMappings;
 
-      this.deletes = [];
-      this.updates = [];
-      this.inserts = [];
+        this.model = updateJson;
 
-      this.queries = [];
-  }
+        this.dbModel = dbJson;
+        this.dbModelJson = this.clone(this.dbModel);
 
-  generateQueries() {
-      this.generateBaseQuery();
+        this.deletes = [];
+        this.updates = [];
+        this.inserts = [];
 
-      this.generateForDiff();
+        this.queries = [];
 
-      this.orderQueries();
+        this.mapOfOldIDs = new SortedMap();
+        this.mapOfNewIDs = new SortedMap();
+    }
 
-      return this.queries;
-  }
+    clone(source) {
+        if (Object.prototype.toString.call(source) === '[object Array]') {
+            var clone = [];
+            for (var i = 0; i < source.length; i++) {
+                clone[i] = this.clone(source[i]);
+            }
+            return clone;
+        } else if (typeof(source) == "object") {
+            var clone = {};
+            for (var prop in source) {
+                if (source.hasOwnProperty(prop)) {
+                    clone[prop] = this.clone(source[prop]);
+                }
+            }
+            return clone;
+        } else {
+            return source;
+        }
+    }
 
-  generateBaseQuery() {
-      let modelToUpdate = this.modelClass.ensureModel(this.model);
-      let baseUpdate = this.modelClass.query().update(this.model).where('id', '=', this.model.id);
+    generateQueries() {
+        this.generateBaseQuery();
 
-      this.queries.push(baseUpdate);
-  }
+        this.populateIDSFromOlder();
 
-  generateFromInsert(currentDiff) {
-      let json = currentDiff.item.rhs;
-      let path = currentDiff.path[0];
+        this.generateFromDifference();
 
-      let relationMapping = this.modelClass.relationMappings[path];
-      let relationModelClass = relationMapping.modelClass;
+        this.orderQueries();
 
-      // Add FK property in JSON
-      if (!relationMapping.relationField) {
-          throw new Error('Relation Field is required for update cascade.');
-      }
+        return this.queries;
+    }
 
-      let fk = relationMapping.relationField;
-      let fk_id = this.model.id;
+    generateBaseQuery() {
+        let modelToUpdate = this.modelClass.ensureModel(this.model);
+        let baseUpdate = this.modelClass.query().update(this.model).where('id', '=', this.model.id);
 
-      Object.defineProperty(json, fk, {
-          value: fk_id,
-          writable: true,
-          enumerable: true,
-          configurable: true
-      });
+        this.queries.push(baseUpdate);
+    }
 
-      // Gerantee ID
-      if (!json.id) {
-          json.id = uuid.v4();
-      }
+    populateIDSFromOlder() {
+        let self = this;
+        _.each(this.relationMappings, (relationMapping, relationName) => {
+            self.populateIDSFromRelationName(relationMapping, relationName);
+        });
+    }
 
-      let modelToPersist = relationModelClass.ensureModel(json);
+    populateIDSFromRelationName(relationMapping, relationName) {
+        let oldNodes = this.dbModelJson[relationName];
+        let newNodes = this.model[relationName];
 
-      let insert = relationModelClass.query().insert(modelToPersist);
-      this.inserts.push(insert);
+        let oldIDs = [];
+        let newIDs = [];
 
-      let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
-      if (isManyToMany){
-          if (!relationMapping.join.through.modelClass) {
-              throw new Error('modelClass from ManyToManyRelation is required.');
-          }
+        _.each(oldNodes, (value, index) => {
+            if (value !== null && typeof(value) !== 'undefined') {
+                oldIDs.push(value.id);
+            }
+        });
+        this.mapOfOldIDs.set(relationName, oldIDs);
 
-          let manyToManyModel = relationMapping.join.through.modelClass;
-          let fromField = relationMapping.join.through.from.split('.')[1];
-          let toField = relationMapping.join.through.to.split('.')[1];
+        _.each(newNodes, (value, index) => {
+            if (value !== null && typeof(value) !== 'undefined') {
+                newIDs.push(value.id);
+            }
+        });
+        this.mapOfNewIDs.set(relationName, newIDs);
+    }
 
-          let jsonManyToMany = {};
-          jsonManyToMany[fromField] = this.model.id;
-          jsonManyToMany[toField] = modelToPersist.id;
+    generateFromDifference() {
+        let self = this;
 
-          let manyToManyToInsert = manyToManyModel.ensureModel(jsonManyToMany);
+        _.each(this.relationMappings, (relationMapping, relationName) => {
+            self.generateDeleteFromIDs(relationName);
+            self.generateInsertAndUpdateFromIDs(relationName);
+        });
+    }
 
-          let insertMany = manyToManyModel.query().insert(manyToManyToInsert);
-          this.inserts.push(insertMany);
-      }
-  }
+    generateDeleteFromIDs(relationName) {
+        let self = this;
 
-  generateFromDeleteFromArray(currentDiff) {
-      let deletedID = currentDiff.item.lhs.id;
-      let path = currentDiff.path[0];
+        let currentOldIDs = this.mapOfOldIDs.get(relationName);
+        let currentNewIDs = this.mapOfNewIDs.get(relationName);
 
-      let relationMapping = this.modelClass.relationMappings[path];
-      let relationModelClass = relationMapping.modelClass;
+        _.each(currentOldIDs, (currentID) => {
+            if (currentNewIDs.indexOf(currentID) < 0) {
+                self.generateDeleteFromID(relationName, currentID)
+            }
+        });
+    }
 
-      let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
-      // ManyToMany Delete
-      if (isManyToMany){
-          let manyToManyModel = relationMapping.join.through.modelClass;
-          if (!manyToManyModel) {
-              throw new Error('modelClass from ManyToManyRelation is required.');
-          }
+    generateDeleteFromID(relationName, currentID) {
+        let deletedID = currentID;
 
-          let fromField = relationMapping.join.through.from.split('.')[1];
-          let toField = relationMapping.join.through.to.split('.')[1];
+        let relationMapping = this.relationMappings[relationName];
+        let relationModelClass = relationMapping.modelClass;
 
-          let deleteQuery = manyToManyModel.query().delete()
-              .where(toField, '=', deletedID)
-              .where(fromField, '=', this.model.id);
+        let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
+        // ManyToMany Delete
+        if (isManyToMany) {
+            let manyToManyModel = relationMapping.join.through.modelClass;
+            if (!manyToManyModel) {
+                throw new Error('modelClass from ManyToManyRelation is required.');
+            }
 
-          this.deletes.push(deleteQuery);
-      // Normal Delete
-      } else {
-        let deleteQuery = relationModelClass.query().deleteById(deletedID);
+            let fromField = relationMapping.join.through.from.split('.')[1];
+            let toField = relationMapping.join.through.to.split('.')[1];
 
-        this.deletes.push(deleteQuery);
-      }
-  }
+            let deleteQuery = manyToManyModel.query().delete()
+                .where(toField, '=', deletedID)
+                .where(fromField, '=', this.model.id);
 
-  generateFromDeletePosition(currentDiff) {
-      let deletedID = currentDiff.lhs.id;
-      let path = currentDiff.path[0];
+            this.deletes.push(deleteQuery);
+            // Normal Delete
+        } else {
+            let deleteQuery = relationModelClass.query().deleteById(deletedID);
 
-      let relationMapping = this.modelClass.relationMappings[path];
-      let relationModelClass = relationMapping.modelClass;
+            this.deletes.push(deleteQuery);
+        }
+    }
 
-      let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
-      // ManyToMany Delete
-      if (isManyToMany){
-          let manyToManyModel = relationMapping.join.through.modelClass;
-          if (!manyToManyModel) {
-              throw new Error('modelClass from ManyToManyRelation is required.');
-          }
+    generateInsertAndUpdateFromIDs(relationName) {
+        let self = this;
 
-          let fromField = relationMapping.join.through.from.split('.')[1];
-          let toField = relationMapping.join.through.to.split('.')[1];
+        let currentOldIDs = this.mapOfOldIDs.get(relationName);
+        let currentNewIDs = this.mapOfNewIDs.get(relationName);
 
-          let deleteQuery = manyToManyModel.query().delete()
-              .where(toField, '=', deletedID)
-              .where(fromField, '=', this.model.id);
+        _.each(currentNewIDs, (currentID) => {
+            if (currentOldIDs.indexOf(currentID) < 0) {
+                self.generateInsertFromID(relationName, currentID);
+            } else {
+                self.generateUpdateFromID(relationName, currentID);
+            }
+        });
+    }
 
-          this.deletes.push(deleteQuery);
-      // Normal Delete
-      } else {
-        let deleteQuery = relationModelClass.query().deleteById(deletedID);
+    getNewNodeFromRelationNameAndID(relationName, currentID) {
+        let currentNode = null;
+        let nodes = this.model[relationName];
+        _.each(nodes, (current) => {
+            if (current !== null && typeof(current) !== 'undefined') {
+                if (current.id === currentID) {
+                    currentNode = current;
+                }
+            }
+        });
+        return currentNode;
+    }
 
-        this.deletes.push(deleteQuery);
-      }
-  }
+    getOldNodeFromRelationNameAndID(relationName, currentID) {
+        let currentNode = null;
+        let nodes = this.dbModelJson[relationName];
+        _.each(nodes, (current) => {
+            if (current !== null && typeof(current) !== 'undefined') {
+                if (current.id === currentID) {
+                    currentNode = current;
+                }
+            }
+        });
+        return currentNode;
+    }
 
-  generateFromUpdate(currentDiff) {
-      let path = currentDiff.path;
-      if (path.length === 1) {
-          // update single property - not used because baseUpdate is always generated
-      } else {
-          let relation = path[0];
-          let index = path[1];
-          let property = path[2];
-          let oldValue = currentDiff.lhs;
-          let value = currentDiff.rhs;
+    generateInsertFromID(relationName, currentID) {
+        let json = this.getNewNodeFromRelationNameAndID(relationName, currentID);
 
-          let relationMapping = this.modelClass.relationMappings[relation];
-          let relationModelClass = relationMapping.modelClass;
+        let relationMapping = this.relationMappings[relationName];
+        let relationModelClass = relationMapping.modelClass;
 
-          let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
-          if (isManyToMany) {
-              let manyToManyModel = relationMapping.join.through.modelClass;
-              if (!manyToManyModel) {
-                  throw new Error('ModelClass from ManyToManyRelation is required.');
-              }
+        let isManyToMany = (relationMapping.relation == Model.ManyToManyRelation);
+        if (isManyToMany) {
+            if (!relationMapping.join.through.modelClass) {
+                throw new Error('modelClass from ManyToManyRelation is required.');
+            }
 
-              // Changing relation ManyToMany
-              if (property === 'id') {
-                  let fromField = relationMapping.join.through.from.split('.')[1];
-                  let toField = relationMapping.join.through.to.split('.')[1];
+            // If reference just creates ManyToMany relation, else insert relation and manytomany
+            if (relationMapping.type !== 'reference') {
+                // Gerantee ID
+                if (!json.id) {
+                    json.id = uuid.v4();
+                }
 
-                  let json = {};
-                  json[toField] = value;
-                  json[fromField] = this.model.id;
+                let modelToPersist = relationModelClass.ensureModel(json);
 
-                  let modelToPersist = manyToManyModel.ensureModel(json);
+                let insert = relationModelClass.query().insert(modelToPersist);
+                this.inserts.push(insert);
+            }
 
-                  let updateQuery = manyToManyModel.query().update(modelToPersist)
-                      .where(toField, '=', oldValue)
-                      .where(fromField, '=', this.model.id);
+            let manyToManyModel = relationMapping.join.through.modelClass;
+            let fromField = relationMapping.join.through.from.split('.')[1];
+            let toField = relationMapping.join.through.to.split('.')[1];
 
-                  this.updates.push(updateQuery);
-              }
-          // Update Normal Field
-          } else {
-              let json = this.model[relation][index];
-              let currentID = json.id;
+            let jsonManyToMany = {};
+            jsonManyToMany[fromField] = this.model.id;
+            jsonManyToMany[toField] = currentID;
 
-              let modelToPersist = relationModelClass.ensureModel(json);
+            let manyToManyToInsert = manyToManyModel.ensureModel(jsonManyToMany);
 
-              let updateQuery = relationModelClass.query().update(modelToPersist).where('id', '=', modelToPersist.id);
+            let insertMany = manyToManyModel.query().insert(manyToManyToInsert);
 
-              this.updates.push(updateQuery);
-          }
-      }
-  }
+            this.inserts.push(insertMany);
+        } else {
+            // Add FK property in JSON
+            if (!relationMapping.relationField) {
+                throw new Error('Relation Field is required for update cascade. Model: ' + relationModelClass.name);
+            }
 
-  generateForDiff() {
-      let newObject = JSON.parse(JSON.stringify(this.model));
-      let oldObject = JSON.parse(JSON.stringify(this.dbModel));
+            let fk = relationMapping.relationField;
+            let fk_id = this.model.id;
 
-      let diff = deepdiff.diff(oldObject, newObject);
+            Object.defineProperty(json, fk, {
+                value: fk_id,
+                writable: true,
+                enumerable: true,
+                configurable: true
+            });
 
-      for (let key in diff) {
-          let currentDiff = diff[key];
-          let kind = currentDiff.kind;
+            // Gerantee ID
+            if (!json.id) {
+                json.id = uuid.v4();
+            }
 
-          if (kind === 'A') {
-              if (currentDiff.item.kind === 'N') {
-                  // Insert
-                  this.generateFromInsert(currentDiff);
-              } else if (currentDiff.item.kind === 'D') {
-                  // Delete
-                  this.generateFromDeleteFromArray(currentDiff);
-              }
-          } else if (kind === 'E') {
-              // Delete
-              if (currentDiff.rhs === null) {
-                  this.generateFromDeletePosition(currentDiff);
-              // Update
-              } else {
-                  this.generateFromUpdate(currentDiff)
-              }
-          }
-      }
-  }
+            let modelToPersist = relationModelClass.ensureModel(json);
 
-  orderQueries() {
-      // First Insert to garanted PK
-      for (let item in this.inserts) {
-          let query = this.inserts[item];
+            let insert = relationModelClass.query().insert(modelToPersist);
+            this.inserts.push(insert);
+        }
+    }
 
-          this.queries.push(query);
-      }
+    generateUpdateFromID(relationName, currentID) {
+        let newValue = this.getNewNodeFromRelationNameAndID(relationName, currentID);
 
-      // Updates
-      for (let item in this.updates) {
-          let query = this.updates[item];
+        let relationMapping = this.relationMappings[relationName];
+        let relationModelClass = relationMapping.modelClass;
 
-          this.queries.push(query);
-      }
+        let modelToPersist = relationModelClass.ensureModel(newValue);
 
-      // Deletes
-      for (let item in this.deletes) {
-          let query = this.deletes[item];
+        let updateQuery = relationModelClass.query().update(modelToPersist).where('id', '=', modelToPersist.id);
 
-          this.queries.push(query);
-      }
-  }
+        this.updates.push(updateQuery);
+    }
+
+    orderQueries() {
+        // First Insert to garanted PK
+        for (let item in this.inserts) {
+            let query = this.inserts[item];
+
+            this.queries.push(query);
+        }
+
+        // Updates
+        for (let item in this.updates) {
+            let query = this.updates[item];
+
+            this.queries.push(query);
+        }
+
+        // Deletes
+        for (let item in this.deletes) {
+            let query = this.deletes[item];
+
+            this.queries.push(query);
+        }
+    }
 
 }

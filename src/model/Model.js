@@ -289,7 +289,7 @@ export default class Model extends ModelBase {
         const relation = relations[relationName];
 
         if (Array.isArray(relationJson)) {
-          if (!options.skipValidationForRelations || options.skipValidationForRelations === false) {
+          if (this.validateModelArray(options)) {
             this[relationName] = relation.relatedModelClass.ensureModelArray(relationJson, options);
           }
         } else if (relationJson) {
@@ -299,6 +299,17 @@ export default class Model extends ModelBase {
         }
       }
     }
+  }
+
+  validateModelArray(options) {    
+      let validateModelArray = true;
+      if (typeof(options) !== 'undefined' && options !== null) {
+          let skipValidationForRelations = options.skipValidationForRelations;
+          if (typeof(skipValidationForRelations) !== 'undefined' && skipValidationForRelations !== null) {
+              validateModelArray = !options.skipValidationForRelations;
+          }
+      }
+      return validateModelArray;
   }
 
   /**

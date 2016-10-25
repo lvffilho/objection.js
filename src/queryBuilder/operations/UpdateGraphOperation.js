@@ -80,7 +80,7 @@ export default class UpdateGraphOperation extends DelegateOperation {
 
           Promise.all(queries);
       }).catch(function(err) {
-          throw new Error('UpdateGraphOperation ' + err);
+          new Error('UpdateGraphOperation ' + err);
       });
   }
 
@@ -89,5 +89,7 @@ export default class UpdateGraphOperation extends DelegateOperation {
     // are not called twice for the root models.
     return true;
   }
+
+
 
 }
