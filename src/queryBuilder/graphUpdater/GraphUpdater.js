@@ -67,7 +67,10 @@ export default class GraphUpdater {
     populateIDSFromOlder() {
         let self = this;
         _.each(this.relationMappings, (relationMapping, relationName) => {
-            self.populateIDSFromRelationName(relationMapping, relationName);
+            let isBelongsToOne = (relationMapping.relation === Model.BelongsToOneRelation);
+            if (!isBelongsToOne) {
+                self.populateIDSFromRelationName(relationMapping, relationName);
+            }
         });
     }
 
@@ -97,8 +100,11 @@ export default class GraphUpdater {
         let self = this;
 
         _.each(this.relationMappings, (relationMapping, relationName) => {
-            self.generateDeleteFromIDs(relationName);
-            self.generateInsertAndUpdateFromIDs(relationName);
+            let isBelongsToOne = (relationMapping.relation === Model.BelongsToOneRelation);
+            if (!isBelongsToOne) {
+                self.generateDeleteFromIDs(relationName);
+                self.generateInsertAndUpdateFromIDs(relationName);              
+            }
         });
     }
 
